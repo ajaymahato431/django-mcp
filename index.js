@@ -16,8 +16,8 @@ const BASE = "https://docs.djangoproject.com/en/6.0/_sources";
 
 // ─── LRU Cache ───────────────────────────────────────────────────────────────
 
-const CACHE_MAX = 50;
-const DOC_TTL = 60 * 60 * 1000; // 1 hour for doc pages
+const CACHE_MAX = 100;
+const DOC_TTL = 3 * 60 * 60 * 1000; // 3 hours for doc pages
 const cache = new Map();
 
 function cacheGet(key) {
@@ -60,6 +60,12 @@ function cleanText(text) {
   
   // Remove .. _anchor: tags
   out = out.replace(/\.\.\s+_[a-zA-Z0-9_-]+:\n/g, "");
+
+  // Remove Sphinx comments
+  out = out.replace(/\.\.\s+comment::[\s\S]*?(?=\n\S|\n\n\n|$)/g, "");
+
+  // Remove HTML comments if any
+  out = out.replace(/<!--[\s\S]*?-->/g, "");
 
   // Remove module directives that only serve Sphinx context
   out = out.replace(/\.\.\s+(currentmodule|module)::\s*(.*)/g, "");
