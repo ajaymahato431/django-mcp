@@ -1,6 +1,6 @@
 # Django MCP Server
 
-A token-optimized Model Context Protocol (MCP) server for retrieving Django documentation. This tool provides AI agents with up-to-date, accurate context regarding Django 6.0 to help assist you in developing robust Python applications.
+A token-optimized Model Context Protocol (MCP) server for retrieving Django documentation. This tool provides AI agents with up-to-date, accurate context regarding Django 5.x to help assist you in developing robust Python applications.
 
 ## Features
 

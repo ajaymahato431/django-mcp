@@ -12,7 +12,7 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-const BASE = "https://docs.djangoproject.com/en/6.0/_sources";
+const BASE = "https://docs.djangoproject.com/en/5.1/_sources";
 
 // ─── LRU Cache ───────────────────────────────────────────────────────────────
 
