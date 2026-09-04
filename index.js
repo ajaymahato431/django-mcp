@@ -143,11 +143,7 @@ server.registerTool(
   }, NETWORK_HINT)
 );
 
-<<<<<<< HEAD
 // ─── search_django_docs ──────────────────────────────────────────────────────
-=======
-const BASE = "https://docs.djangoproject.com/en/5.1/_sources";
->>>>>>> 8dd43c8eacbddf568b7fc2b0ff3819c97d1ecb6c
 
 server.registerTool(
   "search_django_docs",

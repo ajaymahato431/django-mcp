@@ -1,0 +1,19 @@
+# Normalise line endings.
+#
+# The repository stores LF and checks out LF on every platform, regardless of a
+# contributor's core.autocrlf setting. This is not cosmetic: `index.js` is the
+# package's bin entry, and a shebang terminated by CRLF makes Linux and macOS
+# look for an interpreter literally named "node\r". That breaks
+# `npx <package>` with "env: node\r: No such file or directory" — while working
+# fine on the Windows machine that published it.
+* text=auto eol=lf
+
+# Binary fixtures must never be line-ending normalised; objects-sample.inv is a
+# real zlib-compressed Sphinx inventory and any rewriting corrupts it.
+*.inv binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

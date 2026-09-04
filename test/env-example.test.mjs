@@ -100,6 +100,24 @@ test("package.json is publishable", () => {
 
 test("the entry point is executable via npx", () => {
   const entry = join(ROOT, PACKAGE.bin[NAME]);
-  const firstLine = readFileSync(entry, "utf8").split("\n")[0];
-  assert.equal(firstLine, "#!/usr/bin/env node", "the bin entry needs a shebang");
+  const source = readFileSync(entry, "utf8");
+  const firstLine = source.slice(0, source.indexOf("\n"));
+
+  assert.ok(source.startsWith("#!/usr/bin/env node"), "the bin entry needs a shebang");
+
+  // A CRLF shebang makes Linux and macOS look for an interpreter literally
+  // named "node\r", so `npx <package>` fails with "env: node\r: No such file
+  // or directory" — while working perfectly on the Windows machine that
+  // published it. .gitattributes pins LF; this asserts that it held.
+  assert.ok(
+    !firstLine.includes("\r"),
+    "the shebang must end with LF, not CRLF, or npx breaks on Linux and macOS"
+  );
+});
+
+test("source files use LF line endings", () => {
+  for (const relative of ["index.js", "src/settings.js", "src/core/config.js"]) {
+    const source = readFileSync(join(ROOT, relative), "utf8");
+    assert.ok(!source.includes("\r\n"), `${relative} contains CRLF line endings`);
+  }
 });
