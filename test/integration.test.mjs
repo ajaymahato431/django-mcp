@@ -9,6 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { startServer, repoRoot } from "./helpers/client.mjs";
+import { NAME, VERSION } from "../src/settings.js";
 
 const ROOT = repoRoot(import.meta.url);
 
@@ -23,8 +24,8 @@ async function withServer(fn, options = {}) {
 
 test("server initializes and reports its identity", async () => {
   await withServer(async (client) => {
-    assert.equal(client.serverInfo.name, "django-mcp");
-    assert.equal(client.serverInfo.version, "2.0.0");
+    assert.equal(client.serverInfo.name, NAME);
+    assert.equal(client.serverInfo.version, VERSION);
   });
 });
 
