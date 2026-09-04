@@ -6,7 +6,7 @@
  */
 
 export const NAME = "django-mcp";
-export const VERSION = "2.0.0";
+export const VERSION = "2.0.1";
 
 const HOURS = 60 * 60 * 1000;
 

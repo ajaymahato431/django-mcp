@@ -68,6 +68,16 @@ npm version major     # 2.0.0 -> 3.0.0   breaking changes to tool behaviour
 
 This edits `package.json`, commits, and creates a `vX.Y.Z` tag.
 
+**Then bump `src/settings.js` by hand to the same number.** The `VERSION`
+constant there is what the server reports over MCP and on `--version`, and
+`npm version` does not touch it. `npm test` asserts the two agree
+("package version and server version must match"); a mismatch fails the suite
+and `prepublishOnly` aborts the publish.
+
+```js
+export const VERSION = "2.0.1";   // keep in sync with package.json
+```
+
 Update `CHANGELOG.md` under a new heading **before** running it, and remember
 that a change to what a tool *returns* is a breaking change for the agents
 calling it.
