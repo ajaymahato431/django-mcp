@@ -1,1 +1,54 @@
-/node_modules
+# ─── Dependencies ────────────────────────────────────────────────────────────
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+
+# ─── Environment & secrets ───────────────────────────────────────────────────
+# Never commit real configuration. The template below is the only exception.
+.env
+.env.*
+!.env.example
+
+# ─── Python virtual environments (for contributors with mixed toolchains) ────
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+
+# ─── Build output & caches ───────────────────────────────────────────────────
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+.cache/
+.temp/
+.tmp/
+
+# ─── Logs & diagnostics ──────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.node_repl_history
+
+# ─── Packaged artifacts ──────────────────────────────────────────────────────
+*.tgz
+*.zip
+*.tar.gz
+
+# ─── Editor & OS noise ───────────────────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini

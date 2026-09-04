@@ -1,13 +1,60 @@
 {
   "name": "django-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for Django Documentation",
+  "version": "2.0.0",
+  "description": "Model Context Protocol server that serves Django documentation to AI coding agents",
   "type": "module",
   "main": "index.js",
+  "bin": {
+    "django-mcp": "index.js"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    ".env.example"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test test/core.test.mjs test/env-example.test.mjs test/inventory.test.mjs test/django.test.mjs",
+    "test:integration": "node --test --test-timeout=90000 test/integration.test.mjs",
+    "test:all": "npm test && npm run test:integration"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "modelcontextprotocol",
+    "model-context-protocol",
+    "django",
+    "python",
+    "orm",
+    "documentation",
+    "sphinx",
+    "ai",
+    "llm",
+    "claude",
+    "cursor"
+  ],
+  "author": "Ajay Mahato (https://github.com/ajaymahato431)",
+  "license": "MIT",
+  "homepage": "https://github.com/ajaymahato431/django-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ajaymahato431/django-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ajaymahato431/django-mcp/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.2.0"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
   }
 }

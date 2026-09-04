@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve
+      description: Describe the situation you hit, not only the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should the server do? Which tool would change?
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

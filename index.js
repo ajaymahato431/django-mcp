@@ -1,410 +1,331 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+#!/usr/bin/env node
+/**
+ * django-mcp — Model Context Protocol server for Django documentation.
+ *
+ * Fetches, cleans and serves Django docs to AI agents over stdio, with an
+ * emphasis on returning the smallest useful slice of a page.
+ */
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+import { bootstrap } from "./src/core/config.js";
+import { createHttpClient } from "./src/core/http.js";
+import { extractSection, renderOutline } from "./src/core/markdown.js";
+import { runMain, serveStdio, textResult, errorResult, safeHandler } from "./src/core/runtime.js";
 import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+  parseInventory,
+  documentPages,
+  groupBySection,
+  sectionOf,
+  searchSymbols,
+  resolveSymbol,
+  ROLE_FILTERS,
+} from "./src/inventory.js";
+import { cleanText, sourceUrl, pageUrl, inventoryUrl, normalizePath } from "./src/django.js";
+import { ALL_TOPICS, renderBestPractices } from "./src/best-practices.js";
+import { NAME, VERSION, SCHEMA } from "./src/settings.js";
 
-// ─── Server ──────────────────────────────────────────────────────────────────
+const { config } = bootstrap({
+  name: NAME,
+  version: VERSION,
+  description: "Serves Django documentation to AI agents over the Model Context Protocol.",
+  schema: SCHEMA,
+  importMetaUrl: import.meta.url,
+  examples: [`${NAME} --docs-version 5.2`, `${NAME} --timeout 30000`],
+});
 
-const server = new Server(
-  { name: "django-mcp", version: "1.0.0" },
-  { capabilities: { tools: {} } }
+const http = createHttpClient({
+  userAgent: `${NAME}/${VERSION} (+https://github.com/ajaymahato431/django-mcp)`,
+  timeoutMs: config.requestTimeoutMs,
+  retries: config.retries,
+  cacheMax: config.cacheMax,
+  defaultTtl: config.docTtlMs,
+  negativeTtl: config.negativeTtlMs,
+});
+
+/**
+ * Loads Django's Sphinx object inventory.
+ *
+ * One ~110 KB request yields every page, setting, template tag, field lookup,
+ * class, method and attribute, each with its page and anchor. It replaces both
+ * the recursive table-of-contents crawl the previous version used to list pages
+ * and the keyword search it never had.
+ */
+async function loadInventory() {
+  const buffer = await http.fetchBuffer(inventoryUrl(config.docsVersion), {
+    ttl: config.indexTtlMs,
+  });
+
+  try {
+    return parseInventory(buffer);
+  } catch (error) {
+    throw new Error(
+      `Could not read the Django ${config.docsVersion} object inventory: ${error.message}\n` +
+        `Check that DJANGO_DOCS_VERSION names a published version, such as 6.0, 5.2 or stable.`
+    );
+  }
+}
+
+async function readPage(path) {
+  const raw = await http.fetchText(sourceUrl(config.docsVersion, path), { ttl: config.docTtlMs });
+  return cleanText(raw);
+}
+
+const server = new McpServer({ name: NAME, version: VERSION }, { capabilities: { tools: {} } });
+
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
+const NETWORK_HINT = "Check network access to docs.djangoproject.com, then try again.";
+
+// ─── list_django_docs ────────────────────────────────────────────────────────
+
+server.registerTool(
+  "list_django_docs",
+  {
+    title: "List Django documentation pages",
+    description:
+      "Browses the Django documentation index. Called with no arguments it returns a " +
+      "section summary (~50 tokens) — start here. Pass `section` to list that section's " +
+      'pages. Note that `releases` holds hundreds of release-note pages; prefer ' +
+      "search_django_docs over listing it.",
+    inputSchema: {
+      section: z
+        .string()
+        .optional()
+        .describe(
+          'Section to list, e.g. "topics", "ref", "howto", "intro", "faq". ' +
+            'Use "all" for every page. Omit for the section summary.'
+        ),
+      limit: z.number().int().positive().max(1000).optional().describe("Maximum pages to return."),
+      offset: z.number().int().min(0).optional().describe("Pages to skip, for paging."),
+    },
+    annotations: READ_ONLY,
+  },
+  safeHandler(async ({ section, limit, offset = 0 }) => {
+    const { entries, version } = await loadInventory();
+    const pages = documentPages(entries);
+
+    if (!section) {
+      const groups = groupBySection(pages);
+      const rows = groups.map((g) => `  ${g.section} — ${g.count} pages`).join("\n");
+      return textResult(
+        `# Django ${version || config.docsVersion} documentation\n` +
+          `${pages.length} pages across ${groups.length} sections.\n\n${rows}\n\n` +
+          `Next: call again with a section, or use search_django_docs to find a page or symbol.`
+      );
+    }
+
+    const wantsAll = String(section).toLowerCase() === "all";
+    const selected = wantsAll
+      ? pages
+      : pages.filter((p) => sectionOf(p.path).toLowerCase() === String(section).toLowerCase());
+
+    if (selected.length === 0) {
+      const available = groupBySection(pages)
+        .map((g) => g.section)
+        .join(", ");
+      return errorResult(
+        `No section "${section}" in the Django docs.\nAvailable sections: ${available}`
+      );
+    }
+
+    const page = selected.slice(offset, offset + (limit ?? selected.length));
+    const more =
+      offset + page.length < selected.length
+        ? `\n\nMore available: call again with offset ${offset + page.length}.`
+        : "";
+
+    return textResult(
+      `# Django ${version || config.docsVersion} — ${wantsAll ? "all pages" : section}\n` +
+        `Showing ${page.length} of ${selected.length}\n\n` +
+        `${page.map((p) => `${p.path} — ${p.title}`).join("\n")}${more}`
+    );
+  }, NETWORK_HINT)
 );
 
-const BASE = "https://docs.djangoproject.com/en/6.0/_sources";
+// ─── search_django_docs ──────────────────────────────────────────────────────
 
-// ─── LRU Cache ───────────────────────────────────────────────────────────────
-
-const CACHE_MAX = 100;
-const DOC_TTL = 3 * 60 * 60 * 1000; // 3 hours for doc pages
-const cache = new Map();
-
-function cacheGet(key) {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > entry.ttl) {
-    cache.delete(key);
-    return null;
-  }
-  cache.delete(key);
-  cache.set(key, entry);
-  return entry.data;
-}
-
-function cacheSet(key, data, ttl) {
-  if (cache.size >= CACHE_MAX) {
-    const oldest = cache.keys().next().value;
-    cache.delete(oldest);
-  }
-  cache.set(key, { data, ts: Date.now(), ttl });
-}
-
-// ─── Fetcher ─────────────────────────────────────────────────────────────────
-
-async function fetchText(url, ttl = DOC_TTL) {
-  const cached = cacheGet(url);
-  if (cached) return cached;
-
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const text = await res.text();
-  cacheSet(url, text, ttl);
-  return text;
-}
-
-// ─── Markdown / reST Cleaner ─────────────────────────────────────────────────
-
-function cleanText(text) {
-  let out = text;
-  
-  // Remove .. _anchor: tags
-  out = out.replace(/\.\.\s+_[a-zA-Z0-9_-]+:\n/g, "");
-
-  // Remove Sphinx comments
-  out = out.replace(/\.\.\s+comment::[\s\S]*?(?=\n\S|\n\n\n|$)/g, "");
-
-  // Remove HTML comments if any
-  out = out.replace(/<!--[\s\S]*?-->/g, "");
-
-  // Remove module directives that only serve Sphinx context
-  out = out.replace(/\.\.\s+(currentmodule|module)::\s*(.*)/g, "");
-
-  // Convert Sphinx/reST notes and warnings to markdown blockquotes
-  out = out.replace(/\.\.\s+(note|warning|versionadded|versionchanged|deprecated)::\s*(.*)/g, (_, type, content) => {
-    return `> **${type.toUpperCase()}:** ${content.trim()}`;
-  });
-  
-  // Strip code blocks markers to standard markdown fences
-  out = out.replace(/\.\.\s+code-block::\s*([a-zA-Z0-9_-]+)?.*/g, "```$1");
-  
-  // Strip roles like :class:`Model`, :func:`render` -> `Model`, `render`
-  out = out.replace(/:[a-zA-Z0-9_-]+:`([^`]+)`/g, "`$1`");
-
-  // Convert headings
-  const lines = out.split('\n');
-  const processed = [];
-  const levels = {};
-  let currentLevel = 1;
-
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-    
-    // Check for overline + heading + underline
-    if (/^[=\-~^\."']{3,}$/.test(line.trim())) {
-      const nextLine = lines[i+1];
-      const nextNextLine = lines[i+2];
-      if (nextLine && nextNextLine && nextNextLine.trim() === line.trim() && nextLine.trim().length > 0) {
-        const char = line.trim()[0];
-        if (!levels[char]) levels[char] = currentLevel++;
-        processed.push('#'.repeat(levels[char]) + ' ' + nextLine.trim());
-        i += 2;
-        continue;
-      }
-    }
-
-    // Check for heading + underline
-    const nextLine = lines[i+1];
-    if (nextLine && nextLine.length >= line.trim().length && line.trim().length > 0 && /^[=\-~^\."']{3,}$/.test(nextLine.trim())) {
-      if (!line.match(/^\s/)) { // Headings shouldn't be indented
-        const char = nextLine.trim()[0];
-        if (!levels[char]) levels[char] = currentLevel++;
-        processed.push('#'.repeat(levels[char]) + ' ' + line.trim());
-        i++;
-        continue;
-      }
-    }
-    
-    processed.push(line);
-  }
-  out = processed.join('\n');
-
-  // Collapse 3+ blank lines
-  out = out.replace(/\n{3,}/g, "\n\n");
-  return out.trim();
-}
-
-// ─── Section Extractor ───────────────────────────────────────────────────────
-
-function extractSection(md, sectionName) {
-  const lines = md.split("\n");
-  const target = sectionName.toLowerCase().trim();
-  let capturing = false;
-  let captureLevel = 0;
-  const result = [];
-
-  for (const line of lines) {
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)/);
-    if (headingMatch) {
-      const level = headingMatch[1].length;
-      const title = headingMatch[2].toLowerCase().trim();
-      if (!capturing && title.includes(target)) {
-        capturing = true;
-        captureLevel = level;
-        result.push(line);
-        continue;
-      }
-      if (capturing && level <= captureLevel) {
-        break; // Next heading of equal or higher level — stop
-      }
-    }
-    if (capturing) {
-      result.push(line);
-    }
-  }
-
-  return result.length > 0 ? result.join("\n").trim() : null;
-}
-
-// ─── TocTree Extractor ───────────────────────────────────────────────────────
-
-function parseTocTree(text, basePath) {
-  const lines = text.split("\n");
-  let capturing = false;
-  const paths = [];
-
-  for (const line of lines) {
-    if (line.match(/^\.\.\s+toctree::/)) {
-      capturing = true;
-      continue;
-    }
-    if (capturing) {
-      if (line.trim() === "" || line.match(/^\s+:/)) {
-        // Skip empty lines or options like `:maxdepth: 2`
-        continue;
-      }
-      if (line.match(/^\S/)) {
-        // End of indented block
-        capturing = false;
-        continue;
-      }
-      const target = line.trim();
-      if (target) {
-        let fullPath = target;
-        if (basePath && basePath !== "") {
-          fullPath = `${basePath}/${target}`;
-        }
-        paths.push(fullPath);
-      }
-    }
-  }
-  return paths;
-}
-
-// ─── Best Practices Content ──────────────────────────────────────────────────
-
-const BEST_PRACTICES = {
-  architecture: `## Architecture
-- Use "Fat Models, Thin Views". Put business logic on model methods or managers, not in views.
-- Keep apps small, focused, and reusable. A Django project is a collection of apps.
-- Use environment variables (via packages like \`django-environ\`) for secrets and settings.
-- Separate settings for development, testing, and production.`,
-
-  models: `## Models & Database
-- Use \`select_related()\` and \`prefetch_related()\` to avoid N+1 query problems.
-- Don't use \`null=True\` on string-based fields (\`CharField\`, \`TextField\`); use \`blank=True\` instead.
-- Index fields that you frequently filter or sort by using \`db_index=True\` or \`indexes\`.
-- Keep the \`__str__\` method simple and robust (avoiding database queries inside it).`,
-
-  views: `## Views & URLs
-- Name your URL patterns using the \`name\` argument for reverse lookups.
-- Namespace your URLs at the app level.
-- Prefer Class-Based Views (CBVs) for standard CRUD operations, but don't overcomplicate them with deep inheritance. Use Function-Based Views (FBVs) for simple or highly custom logic.
-- Return appropriate HTTP status codes (e.g., 404 via \`get_object_or_404\`).`,
-
-  templates: `## Templates
-- Keep logic out of templates. Use custom template tags and filters for complex presentation logic.
-- Use \`{% url %}\` instead of hardcoding URLs.
-- Make use of template inheritance (\`{% extends %}\` and \`{% block %}\`) to DRY your templates.`,
-
-  security: `## Security
-- Never expose \`SECRET_KEY\` or \`DEBUG=True\` in production.
-- Rely on Django's built-in CSRF protection for all POST requests.
-- Use Django's authentication and authorization framework; do not write your own.
-- Always use Django's ORM or parameterized queries to prevent SQL injection.`
-};
-
-const ALL_TOPICS = Object.keys(BEST_PRACTICES);
-
-// ─── Tool Definitions ────────────────────────────────────────────────────────
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: "list_django_docs",
-      description: "Discovers available documentation sub-pages by parsing the TOC of a given path. Defaults to root.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "Optional path to list sub-pages for (e.g., 'topics', 'ref', 'howto'). Leave empty for the root."
-          }
-        }
-      }
+server.registerTool(
+  "search_django_docs",
+  {
+    title: "Search Django documentation and symbols",
+    description:
+      "Searches Django's object inventory — every page, setting, template tag, template " +
+      "filter, field lookup, class, method and attribute, each with the page it lives on. " +
+      'Use it to answer "where is X documented?". Filter with `role` to disambiguate, ' +
+      'e.g. role "setting" for INSTALLED_APPS or role "fieldlookup" for icontains.',
+    inputSchema: {
+      query: z
+        .string()
+        .min(1)
+        .describe('What to look for, e.g. "ForeignKey", "select_related", "INSTALLED_APPS".'),
+      role: z
+        .enum(ROLE_FILTERS)
+        .optional()
+        .describe("Restrict results to one kind of object. Omit to search everything."),
+      maxResults: z
+        .number()
+        .int()
+        .positive()
+        .max(50)
+        .optional()
+        .describe("Result count. Default 10."),
     },
-    {
-      name: "read_django_docs",
-      description: "Fetches and returns the content of a specific Django documentation page.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "The doc page path (e.g., 'topics/db/models', 'ref/models/querysets'). Required."
-          },
-          section: {
-            type: "string",
-            description: "Optional heading name to extract only that section (e.g., 'Fields', 'Meta options'). Drastically reduces tokens."
-          }
-        },
-        required: ["path"]
-      }
+    annotations: READ_ONLY,
+  },
+  safeHandler(async ({ query, role, maxResults }) => {
+    const { entries, version } = await loadInventory();
+    const results = searchSymbols(entries, query, {
+      limit: maxResults ?? config.maxResults,
+      role,
+    });
+
+    if (results.length === 0) {
+      return textResult(
+        `Nothing in the Django ${version || config.docsVersion} inventory matched "${query}"` +
+          `${role ? ` with role "${role}"` : ""}.\n` +
+          `Try a broader term, drop the role filter, or browse with list_django_docs.`
+      );
+    }
+
+    const rows = results
+      .map((entry, i) => {
+        const where = entry.anchor ? `${entry.path}#${entry.anchor}` : entry.path;
+        return `${i + 1}. **${entry.name}** (${entry.role}) — \`${where}\``;
+      })
+      .join("\n");
+
+    return textResult(
+      `# Search: "${query}"${role ? ` (role: ${role})` : ""}\n${results.length} results:\n\n${rows}\n\n` +
+        `Read one with read_django_docs, passing \`symbol\` for the exact section ` +
+        `(e.g. { "symbol": "${results[0].name}" }).`
+    );
+  }, NETWORK_HINT)
+);
+
+// ─── read_django_docs ────────────────────────────────────────────────────────
+
+server.registerTool(
+  "read_django_docs",
+  {
+    title: "Read a Django documentation page",
+    description:
+      "Reads one Django documentation page. Pass `symbol` to jump straight to a setting, " +
+      "method or class and return only its section — by far the cheapest way to answer a " +
+      "specific question. Otherwise pass `path`, optionally with `section`.",
+    inputSchema: {
+      path: z
+        .string()
+        .optional()
+        .describe('Page path, e.g. "topics/db/models" or "ref/settings". Required unless `symbol` is given.'),
+      symbol: z
+        .string()
+        .optional()
+        .describe(
+          'A documented name, e.g. "INSTALLED_APPS", "select_related", "ForeignKey". ' +
+            "Resolves to its page and returns just that section."
+        ),
+      section: z
+        .string()
+        .optional()
+        .describe('Heading to extract, e.g. "Field options". Greatly reduces output size.'),
+      outline: z
+        .boolean()
+        .optional()
+        .describe("Return only the page's heading outline, to choose a section cheaply."),
     },
-    {
-      name: "django_best_practices",
-      description: "Returns a static set of Django best practices. Topics: 'architecture', 'models', 'views', 'templates', 'security'. Returns all if omitted.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          topic: {
-            type: "string",
-            description: `Optional topic filter: ${ALL_TOPICS.join(", ")}.`
-          }
-        }
-      }
+    annotations: READ_ONLY,
+  },
+  safeHandler(async ({ path, symbol, section, outline }) => {
+    if (!path && !symbol) {
+      return errorResult(
+        'Pass either "path" (e.g. "topics/db/models") or "symbol" (e.g. "INSTALLED_APPS"). ' +
+          "Use search_django_docs or list_django_docs to discover both."
+      );
     }
-  ]
-}));
 
-// ─── Tool Handlers ───────────────────────────────────────────────────────────
+    let targetPath = path ? normalizePath(path) : null;
+    let targetSection = section;
+    let resolved = null;
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+    if (symbol) {
+      const { entries } = await loadInventory();
+      resolved = resolveSymbol(entries, symbol);
 
-  // ── list_django_docs ──────────────────────────────────────────────────────
-  if (name === "list_django_docs") {
-    let rawPath = (args?.path || "").replace(/^\/+/, "").replace(/\.txt$/, "");
-    if (!rawPath) rawPath = "contents"; // Root index in Sphinx/Django
+      if (!resolved) {
+        const near = searchSymbols(entries, symbol, { limit: 5 });
+        const suggestion = near.length
+          ? `\n\nDid you mean:\n${near.map((e) => `  ${e.name} (${e.role})`).join("\n")}`
+          : "\n\nUse search_django_docs to find the right name.";
+        return errorResult(`No documented symbol named "${symbol}".${suggestion}`);
+      }
 
-    // Usually directories have an index.txt, but sometimes the file itself has the toctree
-    // E.g., 'topics' -> might be 'topics.txt' or 'topics/index.txt'
-    // Django typically uses 'topics/index.txt' for directories
-    
-    // We try the provided path as-is (with .txt), if 404, we try path/index.txt
-    let url = `${BASE}/${rawPath}.txt`;
-    let text = "";
-    
+      targetPath = resolved.path;
+      // The heading is the symbol's own short name; the inventory anchor exists
+      // for the rendered HTML, which is not what is being parsed here.
+      targetSection = section ?? resolved.shortName;
+    }
+
+    let content;
     try {
-      text = await fetchText(url);
-    } catch (e1) {
-      if (!rawPath.endsWith("index")) {
-        try {
-          url = `${BASE}/${rawPath}/index.txt`;
-          text = await fetchText(url);
-        } catch (e2) {
-          return {
-            content: [{ type: "text", text: `Failed to fetch index for path '${rawPath}': ${e1.message} and ${e2.message}` }],
-            isError: true,
-          };
-        }
-      } else {
-        return {
-          content: [{ type: "text", text: `Failed to fetch index for path '${rawPath}': ${e1.message}` }],
-          isError: true,
-        };
+      content = await readPage(targetPath);
+    } catch (error) {
+      if (error?.status === 404) {
+        return errorResult(
+          `No such page: ${targetPath}\n` +
+            `Use list_django_docs or search_django_docs to find a valid path.`
+        );
       }
+      throw error;
     }
 
-    let basePath = rawPath === "contents" ? "" : rawPath.replace(/\/index$/, "");
-    const subPaths = parseTocTree(text, basePath);
+    const source = pageUrl(config.docsVersion, targetPath, resolved?.anchor ?? "");
 
-    if (subPaths.length === 0) {
-      return {
-        content: [{ type: "text", text: `No sub-pages found in '.. toctree::' at ${url}. It might be a leaf page. Try using read_django_docs on this path.` }]
-      };
+    if (outline) {
+      return textResult(`# Outline — ${targetPath}\n\n${renderOutline(content)}`);
     }
 
-    const lines = subPaths.map(p => `- ${p}`);
-    return {
-      content: [{ type: "text", text: `Found ${subPaths.length} sub-pages at ${url}:\n\n${lines.join("\n")}` }]
-    };
-  }
-
-  // ── read_django_docs ──────────────────────────────────────────────────────
-  if (name === "read_django_docs") {
-    let path = (args?.path || "").replace(/^\/+/, "").replace(/\.txt$/, "");
-    if (!path) {
-      return {
-        content: [{ type: "text", text: 'Missing required "path" parameter. Use list_django_docs to discover available paths.' }],
-        isError: true,
-      };
-    }
-
-    // Try path.txt, then path/index.txt
-    let url = `${BASE}/${path}.txt`;
-    let text = "";
-    try {
-      text = await fetchText(url);
-    } catch (e1) {
-      if (!path.endsWith("index")) {
-        try {
-          url = `${BASE}/${path}/index.txt`;
-          text = await fetchText(url);
-        } catch (e2) {
-          return {
-            content: [{ type: "text", text: `Failed to fetch doc: ${url}\nBoth ${path}.txt and ${path}/index.txt resulted in errors. Use list_django_docs to find valid paths.` }],
-            isError: true,
-          };
-        }
-      } else {
-        return {
-          content: [{ type: "text", text: `Failed to fetch doc: ${url}\n${e1.message}` }],
-          isError: true,
-        };
-      }
-    }
-
-    let cleaned = cleanText(text);
-    
-    const section = args?.section;
-    if (section) {
-      const extracted = extractSection(cleaned, section);
+    if (targetSection) {
+      const extracted = extractSection(content, targetSection);
       if (extracted) {
-        cleaned = extracted;
-      } else {
-        cleaned = `> Section "${section}" not found on this page.\n\n${cleaned}`;
+        const header = resolved
+          ? `Source: ${source}\n${resolved.name} (${resolved.role})\n\n`
+          : `Source: ${source}\n\n`;
+        return textResult(header + extracted);
       }
+
+      // Returning the whole page would be the opposite of what was asked; the
+      // outline lets the caller retry precisely and cheaply.
+      return textResult(
+        `Section "${targetSection}" was not found on ${targetPath}. Available headings:\n\n` +
+          `${renderOutline(content)}\n\n` +
+          `Re-read with one of these, or omit "section" for the full page.`
+      );
     }
 
-    return {
-      content: [{ type: "text", text: `Source: ${url}\n\n${cleaned}` }]
-    };
-  }
+    return textResult(`Source: ${source}\n\n${content}`);
+  }, NETWORK_HINT)
+);
 
-  // ── django_best_practices ─────────────────────────────────────────────────
-  if (name === "django_best_practices") {
-    const topic = args?.topic?.toLowerCase();
-    if (topic && BEST_PRACTICES[topic]) {
-      return {
-        content: [{ type: "text", text: `# Django Best Practices — ${topic}\n\n${BEST_PRACTICES[topic]}` }]
-      };
-    }
-    const all = Object.values(BEST_PRACTICES).join("\n\n---\n\n");
-    return {
-      content: [{ type: "text", text: `# Django Best Practices\n\n${all}` }]
-    };
-  }
+// ─── django_best_practices ───────────────────────────────────────────────────
 
-  throw new Error(`Unknown tool: ${name}`);
-});
+server.registerTool(
+  "django_best_practices",
+  {
+    title: "Django best practices",
+    description:
+      "Returns curated Django coding guidelines and anti-patterns. Answers instantly with " +
+      "no network access. Read this before writing or refactoring Django code.",
+    inputSchema: {
+      topic: z.enum(ALL_TOPICS).optional().describe("Single topic to return. Omit for all topics."),
+    },
+    annotations: { ...READ_ONLY, openWorldHint: false },
+  },
+  safeHandler(async ({ topic }) => textResult(renderBestPractices(topic)))
+);
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("Django MCP Server running");
-}
-
-main();
+runMain(async () => {
+  await serveStdio(server, { name: NAME, version: VERSION });
+});

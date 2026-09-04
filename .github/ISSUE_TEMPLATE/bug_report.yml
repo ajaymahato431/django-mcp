@@ -1,0 +1,65 @@
+name: Bug report
+description: Something is not working as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not paste API tokens or other secrets.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Which tool was called, with which arguments.
+      placeholder: |
+        1. Configure the server in <client>
+        2. Call <tool> with { ... }
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: Output of `npx <package> --version`
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Linux, macOS, Windows, Other]
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: Claude Code, Claude Desktop, Cursor, Cline, ...
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server output
+      description: Anything the server printed to stderr. This is rendered as code, no backticks needed.
+      render: shell
