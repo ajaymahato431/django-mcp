@@ -21,6 +21,7 @@
   "scripts": {
     "start": "node index.js",
     "test": "node --test test/core.test.mjs test/env-example.test.mjs test/inventory.test.mjs test/django.test.mjs",
+    "prepublishOnly": "npm test",
     "test:integration": "node --test --test-timeout=90000 test/integration.test.mjs",
     "test:all": "npm test && npm run test:integration"
   },

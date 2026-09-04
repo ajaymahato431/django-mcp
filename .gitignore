@@ -10,6 +10,10 @@ node_modules/
 .env.*
 !.env.example
 
+# npm auth token. `npm config set ... --location=project` writes it here in
+# plaintext; ignoring the file means a slip never becomes a committed secret.
+.npmrc
+
 # ─── Python virtual environments (for contributors with mixed toolchains) ────
 .venv/
 venv/

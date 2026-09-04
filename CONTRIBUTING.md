@@ -70,6 +70,11 @@ context window. Two rules follow from that:
 - Describe the user-visible effect in the PR body.
 - Update `CHANGELOG.md` under `Unreleased`.
 
+## Releasing
+
+Maintainers: see [RELEASING.md](RELEASING.md) for the publish checklist,
+token setup, and troubleshooting.
+
 ## Reporting bugs
 
 Open an issue with the tool name, the arguments you passed, and the server's
