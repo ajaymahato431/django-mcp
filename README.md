@@ -1,10 +1,14 @@
 # django-mcp
 
+<<<<<<< HEAD
 [![npm](https://img.shields.io/npm/v/django-mcp?logo=npm)](https://www.npmjs.com/package/django-mcp)
 [![CI](https://github.com/ajaymahato431/django-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ajaymahato431/django-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/django-mcp)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/Model%20Context%20Protocol-server-6E56CF)](https://modelcontextprotocol.io)
+=======
+A token-optimized Model Context Protocol (MCP) server for retrieving Django documentation. This tool provides AI agents with up-to-date, accurate context regarding Django 5.x to help assist you in developing robust Python applications.
+>>>>>>> 8dd43c8eacbddf568b7fc2b0ff3819c97d1ecb6c
 
 Ask an AI assistant what a Django setting does, or which arguments a queryset
 method takes, and you will often get an answer that is plausible, confident, and
