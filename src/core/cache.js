@@ -1,8 +1,8 @@
 /**
  * LRU cache with TTL, negative caching, and in-flight request de-duplication.
  *
- * Vendored shared module — keep byte-identical across django-mcp, filament-mcp
- * and livewire-mcp so that a fix here is a copy, not a merge.
+ * Vendored shared module — keep byte-identical across django-mcp, filament-mcp,
+ * livewire-mcp, and frontlens-mcp so that a fix here is a copy, not a merge.
  */
 
 /** Wraps a cached failure so we can re-throw it without re-hitting the network. */

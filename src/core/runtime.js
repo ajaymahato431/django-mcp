@@ -2,8 +2,8 @@
  * Server lifecycle: stdio transport wiring, graceful shutdown, and consistent
  * tool-result helpers.
  *
- * Vendored shared module — keep byte-identical across django-mcp, filament-mcp
- * and livewire-mcp so that a fix here is a copy, not a merge.
+ * Vendored shared module — keep byte-identical across django-mcp, filament-mcp,
+ * livewire-mcp, and frontlens-mcp so that a fix here is a copy, not a merge.
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -26,10 +26,34 @@ export function errorResult(text) {
 
 /** Turns a thrown error into a readable, actionable tool result. */
 export function describeError(error, hint) {
-  const base =
-    error?.status !== undefined
-      ? `Upstream returned HTTP ${error.status}.`
-      : `Request failed: ${error?.message ?? String(error)}`;
+  let base;
+  if (error?.status !== undefined) {
+    base = `Upstream returned HTTP ${error.status}.`;
+    if (!hint) {
+      switch (error.status) {
+        case 403:
+          hint =
+            "Rate-limited or forbidden. When the upstream is GitHub, setting GITHUB_TOKEN raises the anonymous rate limit.";
+          break;
+        case 404:
+          hint = "The requested documentation page was not found. Re-check the path with this server's search tool.";
+          break;
+        case 408:
+        case 504:
+          hint = "Request timed out. Try increasing --timeout (default 15000ms).";
+          break;
+        case 429:
+          hint =
+            "Rate-limited by upstream. Wait a moment and retry; a GITHUB_TOKEN helps when the upstream is GitHub.";
+          break;
+      }
+    }
+  } else if (error?.message?.includes?.("timed out")) {
+    base = `Request failed: ${error.message}`;
+    if (!hint) hint = "Try increasing --timeout (default 15000ms) or check network connectivity.";
+  } else {
+    base = `Request failed: ${error?.message ?? String(error)}`;
+  }
   return hint ? `${base}\n${hint}` : base;
 }
 

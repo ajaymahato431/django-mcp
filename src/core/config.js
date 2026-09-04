@@ -2,8 +2,8 @@
  * Configuration: zero-dependency `.env` loading, CLI flag parsing, and
  * precedence resolution (CLI flag > environment variable > built-in default).
  *
- * Vendored shared module — keep byte-identical across django-mcp, filament-mcp
- * and livewire-mcp so that a fix here is a copy, not a merge.
+ * Vendored shared module — keep byte-identical across django-mcp, filament-mcp,
+ * livewire-mcp, and frontlens-mcp so that a fix here is a copy, not a merge.
  */
 
 import { readFileSync, existsSync } from "node:fs";

@@ -1,9 +1,9 @@
 /**
- * Markdown post-processing shared by all three documentation servers:
+ * Markdown post-processing shared by documentation servers:
  * heading discovery and precise section extraction.
  *
- * Vendored shared module — keep byte-identical across django-mcp, filament-mcp
- * and livewire-mcp so that a fix here is a copy, not a merge.
+ * Vendored shared module — keep byte-identical across django-mcp, filament-mcp,
+ * livewire-mcp, and frontlens-mcp so that a fix here is a copy, not a merge.
  */
 
 /** Lines inside fenced code blocks must never be mistaken for headings. */
